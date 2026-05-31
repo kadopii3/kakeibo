@@ -35,7 +35,8 @@
     </div>
     <div style="margin-top:20px;">
         <input type="file" id="csv-file" accept=".csv"><button onclick="importCSV()">CSVインポート</button>
-        <button onclick="clearData()" style="background:#e74c3c">全削除</button>
+        <button onclick="downloadCSV()" style="margin-left: 10px; background-color: #2ecc71;">CSVエクスポート</button>
+        <button onclick="clearData()" style="background:#e74c3c; margin-left: 10px;">全削除</button>
     </div>
     <table id="data-table"><thead><tr><th>日付</th><th>店名</th><th>金額</th><th>支払い</th><th>操作</th></tr></thead><tbody id="data-table-body"></tbody></table>
 </div>
@@ -57,7 +58,7 @@
             const res = await fetch(WEB_APP_URL);
             expenses = await res.json();
             
-            // ★変更点：取得した日付から時間表記を消して YYYY-MM-DD に変換
+            // 日付をJST（YYYY-MM-DD）に変換して時間を削除
             expenses.forEach(e => {
                 let d = new Date(e.date);
                 if (!isNaN(d.getTime())) {
@@ -156,6 +157,27 @@
             return {id: Date.now()+Math.random(), date:c[0], store:c[1], amount:c[2], method:c[3]};
         });
         await syncWithServer({action: 'bulk_insert', data: data});
+    }
+
+    // CSVエクスポート機能を追加
+    function downloadCSV() {
+        if (expenses.length === 0) {
+            alert("ダウンロードするデータがありません。");
+            return;
+        }
+        let csvContent = "日付,店名,金額,支払い方法\n";
+        expenses.forEach(e => {
+            csvContent += `${e.date},${e.store},${e.amount},${e.method}\n`;
+        });
+        const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement("a");
+        const url = URL.createObjectURL(blob);
+        link.setAttribute("href", url);
+        link.setAttribute("download", `kakeibo_${new Date().toISOString().slice(0,10)}.csv`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
     }
 
     function showLoading(s) { document.getElementById('loading-msg').style.display = s ? "block" : "none"; }
