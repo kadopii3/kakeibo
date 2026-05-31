@@ -64,13 +64,14 @@
         try {
             await fetch(WEB_APP_URL, {
                 method: 'POST',
+                mode: 'cors', // ブラウザに対して明確にCORS通信であることを伝えます
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
-            await loadData(); // 成功したら再読み込み
+            await loadData();
         } catch (e) {
             console.error(e);
-            alert("送信エラー：もう一度お試しください。");
+            alert("通信エラーが発生しました。");
         } finally {
             showLoading(false);
         }
