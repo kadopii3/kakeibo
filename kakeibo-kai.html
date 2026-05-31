@@ -14,6 +14,8 @@
         button { background-color: #3498db; color: white; padding: 10px; border: none; cursor: pointer; }
         table { width: 100%; border-collapse: collapse; margin-top: 20px; }
         th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        .summary-list { max-height: 200px; overflow-y: auto; padding-left: 20px; }
+        .summary-list li { margin-bottom: 5px; }
     </style>
 </head>
 <body>
@@ -25,7 +27,8 @@
             <form id="kakeibo-form">
                 <div class="form-group"><label>日付</label><input type="date" id="date" required></div>
                 <div class="form-group"><label>店名</label><input type="text" id="store" list="store-list" required></div>
-                <div class="form-group"><label>金額</label><input type="number" id="amount" required></div>
+                <div class="form-group"><label>金額（円）</label><input type="number" id="amount" required></div>
+                <div class="form-group"><label>たばこ（円・任意）</label><input type="number" id="tobacco" value="0" min="0"></div>
                 <div class="form-group"><label>支払い</label><input type="text" id="method" list="method-list" required></div>
                 <button type="submit">登録する</button>
             </form>
@@ -33,12 +36,15 @@
         </div>
         <div><canvas id="monthlyChart"></canvas></div>
     </div>
+    
+    <div id="summary-section" style="margin-top: 20px; border-top: 2px solid #eee; padding-top: 20px;"></div>
+
     <div style="margin-top:20px;">
         <input type="file" id="csv-file" accept=".csv"><button onclick="importCSV()">CSVインポート</button>
         <button onclick="downloadCSV()" style="margin-left: 10px; background-color: #2ecc71;">CSVエクスポート</button>
         <button onclick="clearData()" style="background:#e74c3c; margin-left: 10px;">全削除</button>
     </div>
-    <table id="data-table"><thead><tr><th>日付</th><th>店名</th><th>金額</th><th>支払い</th><th>操作</th></tr></thead><tbody id="data-table-body"></tbody></table>
+    <table id="data-table"><thead><tr><th>日付</th><th>店名</th><th>金額</th><th>たばこ</th><th>支払い</th><th>操作</th></tr></thead><tbody id="data-table-body"></tbody></table>
 </div>
 
 <script>
@@ -79,11 +85,11 @@
         try {
             await fetch(WEB_APP_URL, {
                 method: 'POST',
-                mode: 'no-cors', // ★この1行が絶対に必要です！
+                mode: 'no-cors',
                 body: JSON.stringify(payload)
             });
-            // no-corsを使うと応答が取れないため、少し待ってから読み直すのがコツです
-            setTimeout(loadData, 1000);
+            // 削除・追加処理がGAS側で終わるのを余裕を持って待つため、2秒後にリロード
+            setTimeout(loadData, 2000);
         } catch (e) {
             console.error(e);
             showLoading(false);
@@ -93,8 +99,11 @@
     function updateUI() {
         expenses.sort((a,b) => new Date(b.date) - new Date(a.date));
         const tbody = document.getElementById('data-table-body');
-        tbody.innerHTML = expenses.map(e => `<tr><td>${e.date}</td><td>${e.store}</td><td>${e.amount}</td><td>${e.method}</td><td><button onclick="deleteEntry('${e.id}')">削除</button></td></tr>`).join('');
+        // テーブルにたばこの列を追加
+        tbody.innerHTML = expenses.map(e => `<tr><td>${e.date}</td><td>${e.store}</td><td>${e.amount}</td><td>${e.tobacco || 0}</td><td>${e.method}</td><td><button onclick="deleteEntry('${e.id}')">削除</button></td></tr>`).join('');
+        
         updateDatalists();
+        renderSummary(); // ★集計処理の呼び出しを追加
         renderChart();
     }
 
@@ -103,21 +112,67 @@
         document.getElementById('store-list').innerHTML = stores.map(s => `<option value="${s}">`).join('');
     }
 
-    // ★ここだけを積み上げグラフ用に変更しました★
+    // ★ 日別・月別の集計を計算して表示する機能
+    function renderSummary() {
+        const daily = {};
+        const monthly = {};
+        const monthlyTotal = {};
+
+        expenses.forEach(e => {
+            const total = Number(e.amount) + (Number(e.tobacco) || 0);
+            const date = e.date;
+            if(!date) return;
+            const month = date.substring(0, 7); // YYYY-MM
+            const method = e.method;
+
+            // 日別合計
+            if (!daily[date]) daily[date] = 0;
+            daily[date] += total;
+
+            // 月別・支払い別合計
+            if (!monthly[month]) {
+                monthly[month] = {};
+                monthlyTotal[month] = 0;
+            }
+            if (!monthly[month][method]) monthly[month][method] = 0;
+            monthly[month][method] += total;
+            monthlyTotal[month] += total;
+        });
+
+        let html = '<div class="grid-2">';
+        // 日別HTML
+        html += '<div style="background:#fafafa; padding:15px; border:1px solid #ddd; border-radius:6px;">';
+        html += '<h2 style="margin-top:0;">各日の合計金額</h2><ul class="summary-list">';
+        Object.keys(daily).sort().reverse().forEach(d => {
+            html += `<li>${d}: <strong>${daily[d].toLocaleString()}円</strong></li>`;
+        });
+        html += '</ul></div>';
+
+        // 月別HTML
+        html += '<div style="background:#fafafa; padding:15px; border:1px solid #ddd; border-radius:6px;">';
+        html += '<h2 style="margin-top:0;">月別の支払い別合計</h2><ul class="summary-list">';
+        Object.keys(monthly).sort().reverse().forEach(m => {
+            html += `<li style="margin-bottom:15px; border-bottom:1px dashed #ccc; padding-bottom:5px;"><strong>${m} (月間合計: ${monthlyTotal[m].toLocaleString()}円)</strong><ul>`;
+            Object.keys(monthly[m]).forEach(method => {
+                html += `<li>${method}: ${monthly[m][method].toLocaleString()}円</li>`;
+            });
+            html += '</ul></li>';
+        });
+        html += '</ul></div></div>';
+
+        document.getElementById('summary-section').innerHTML = html;
+    }
+
     function renderChart() {
         const ctx = document.getElementById('monthlyChart').getContext('2d');
-        
-        // 日付（X軸）と支払い方法のリストを抽出
         const labels = [...new Set(expenses.map(e => e.date))].sort();
         const methods = [...new Set(expenses.map(e => e.method))];
-        
-        // グラフ用の色セット（支払い方法が増えても対応できるように複数用意）
         const colors = ['#3498db', '#e67e22', '#2ecc71', '#f1c40f', '#9b59b6', '#e74c3c', '#1abc9c'];
         
-        // 支払い方法ごとにデータセットを作成
         const datasets = methods.map((m, i) => ({
             label: m,
-            data: labels.map(date => expenses.filter(e => e.date === date && e.method === m).reduce((sum, e) => sum + Number(e.amount), 0)),
+            // グラフには「金額＋たばこ」の合計を反映
+            data: labels.map(date => expenses.filter(e => e.date === date && e.method === m).reduce((sum, e) => sum + Number(e.amount) + (Number(e.tobacco) || 0), 0)),
             backgroundColor: colors[i % colors.length]
         }));
 
@@ -125,12 +180,7 @@
         chartInstance = new Chart(ctx, {
             type: 'bar',
             data: { labels: labels, datasets: datasets },
-            options: { 
-                scales: { 
-                    x: { stacked: true }, 
-                    y: { stacked: true, beginAtZero: true } 
-                } 
-            }
+            options: { scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } } }
         });
     }
 
@@ -142,11 +192,22 @@
             date: document.getElementById('date').value,
             store: document.getElementById('store').value,
             amount: document.getElementById('amount').value,
+            tobacco: document.getElementById('tobacco').value, // ★追加
             method: document.getElementById('method').value
         });
     };
 
-    async function deleteEntry(id) { await syncWithServer({action: 'delete', id: id}); }
+    // ★ 削除ボタンを押した瞬間に画面から消す（Optimistic UI）ように修正
+    async function deleteEntry(id) { 
+        if(confirm('この履歴を削除しますか？')) {
+            // 先に画面のデータから取り除いて再描画する
+            expenses = expenses.filter(e => String(e.id) !== String(id));
+            updateUI();
+            // 裏側でサーバーに削除指示を送る
+            await syncWithServer({action: 'delete', id: id}); 
+        }
+    }
+    
     async function clearData() { if(confirm('全削除しますか？')) await syncWithServer({action: 'clear'}); }
 
     async function importCSV() {
@@ -154,20 +215,21 @@
         const text = await file.text();
         const data = text.split(/\r?\n/).slice(1).filter(l=>l).map(l => {
             const c = l.split(',');
-            return {id: Date.now()+Math.random(), date:c[0], store:c[1], amount:c[2], method:c[3]};
+            // インポート時もたばこ列を考慮
+            return {id: Date.now()+Math.random(), date:c[0], store:c[1], amount:c[2], tobacco:c[3], method:c[4]};
         });
         await syncWithServer({action: 'bulk_insert', data: data});
     }
 
-    // CSVエクスポート機能を追加
     function downloadCSV() {
         if (expenses.length === 0) {
             alert("ダウンロードするデータがありません。");
             return;
         }
-        let csvContent = "日付,店名,金額,支払い方法\n";
+        // CSVのヘッダーと出力内容にたばこを追加
+        let csvContent = "日付,店名,金額,たばこ,支払い方法\n";
         expenses.forEach(e => {
-            csvContent += `${e.date},${e.store},${e.amount},${e.method}\n`;
+            csvContent += `${e.date},${e.store},${e.amount},${e.tobacco || 0},${e.method}\n`;
         });
         const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csvContent], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement("a");
