@@ -19,12 +19,20 @@
         .summary-list { max-height: 200px; overflow-y: auto; padding-left: 20px; margin: 0; }
         .summary-list li { margin-bottom: 5px; }
         .table-responsive { overflow-x: auto; }
+        /* タイトルと月選択を並べるためのスタイル */
+        .header-flex { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 15px; }
     </style>
 </head>
 <body>
 <div class="container">
-    <h1>シンプル家計簿</h1>
-    <div id="loading-msg" style="color:orange; display:none;">通信中...</div>
+    <div class="header-flex">
+        <h1 style="margin: 0;">シンプル家計簿</h1>
+        <div>
+            <label for="month-filter" style="font-weight: bold; color: #2c3e50;">表示月：</label>
+            <select id="month-filter" style="padding: 5px; font-size: 16px; min-width: 150px; border: 1px solid #ccc; border-radius: 4px;"></select>
+        </div>
+    </div>
+    <div id="loading-msg" style="color:orange; display:none; margin-bottom: 15px;">通信中...</div>
     
     <div class="grid-2">
         <div class="card">
@@ -87,6 +95,8 @@
 
     document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('date').valueAsDate = new Date();
+        // 月変更時に表示を更新するイベントを追加
+        document.getElementById('month-filter').addEventListener('change', renderFilteredUI);
         await loadData();
     });
 
@@ -128,9 +138,42 @@
 
     function updateUI() {
         expenses.sort((a,b) => new Date(b.date) - new Date(a.date));
-        const tbody = document.getElementById('data-table-body');
         
-        tbody.innerHTML = expenses.map(e => `<tr>
+        // 月のプルダウンを生成
+        const months = [...new Set(expenses.map(e => e.date ? e.date.substring(0, 7) : ''))].filter(m => m).sort().reverse();
+        const filterEl = document.getElementById('month-filter');
+        const prevValue = filterEl.value;
+        
+        let optionsHtml = '<option value="ALL">すべて表示</option>';
+        months.forEach(m => {
+            const [y, mm] = m.split('-');
+            optionsHtml += `<option value="${m}">${y}年${mm}月</option>`;
+        });
+        filterEl.innerHTML = optionsHtml;
+
+        // デフォルトの選択状態を設定（最新月優先）
+        if (prevValue && (prevValue === 'ALL' || months.includes(prevValue))) {
+            filterEl.value = prevValue;
+        } else if (months.length > 0) {
+            filterEl.value = months[0];
+        }
+
+        updateDatalists(); // プルダウン候補は全期間から生成
+        renderFilteredUI(); // 選択された月でUIを描画
+    }
+
+    // 選択された月でテーブル・集計・グラフを描画する関数
+    function renderFilteredUI() {
+        const filterEl = document.getElementById('month-filter');
+        const targetMonth = filterEl.value;
+        
+        let targetExpenses = expenses;
+        if (targetMonth && targetMonth !== 'ALL') {
+            targetExpenses = expenses.filter(e => e.date && e.date.startsWith(targetMonth));
+        }
+
+        const tbody = document.getElementById('data-table-body');
+        tbody.innerHTML = targetExpenses.map(e => `<tr>
             <td>${e.date}</td>
             <td>${e.store}</td>
             <td>${e.amount}</td>
@@ -143,9 +186,8 @@
             <td><button onclick="deleteEntry('${e.id}')">削除</button></td>
         </tr>`).join('');
         
-        updateDatalists();
-        renderSummary();
-        renderChart();
+        renderSummary(targetExpenses);
+        renderChart(targetExpenses);
     }
 
     function updateDatalists() {
@@ -156,20 +198,19 @@
         const methods = [...new Set(rawMethods)];
         document.getElementById('method-list').innerHTML = methods.map(m => `<option value="${m}">`).join('');
 
-        // 医療費備考のプルダウン用リスト作成
         const rawNotes = expenses.map(e => e.medical_note).filter(n => n && String(n).trim() !== '');
         const notes = [...new Set(rawNotes)];
         document.getElementById('medical-note-list').innerHTML = notes.map(n => `<option value="${n}">`).join('');
     }
 
-    function renderSummary() {
+    function renderSummary(targetExpenses) {
         const daily = {};
         const monthly = {};
         const monthlyTotal = {};
         const monthlyTobacco = {};
         const monthlyMedical = {};
 
-        expenses.forEach(e => {
+        targetExpenses.forEach(e => {
             const amount = Number(e.amount) || 0;
             const tobacco = Number(e.tobacco) || 0;
             const hospital = Number(e.hospital) || 0;
@@ -224,17 +265,17 @@
         document.getElementById('summary-section').innerHTML = html;
     }
 
-    function renderChart() {
+    function renderChart(targetExpenses) {
         const ctx = document.getElementById('monthlyChart').getContext('2d');
-        const labels = [...new Set(expenses.map(e => e.date))].sort();
+        const labels = [...new Set(targetExpenses.map(e => e.date))].sort();
         
-        const rawMethods = expenses.map(e => getSafeMethod(e.method));
+        const rawMethods = targetExpenses.map(e => getSafeMethod(e.method));
         const methods = [...new Set(rawMethods)];
         const colors = ['#3498db', '#e67e22', '#2ecc71', '#f1c40f', '#9b59b6', '#e74c3c', '#1abc9c'];
         
         const datasets = methods.map((m, i) => ({
             label: m,
-            data: labels.map(date => expenses.filter(e => {
+            data: labels.map(date => targetExpenses.filter(e => {
                 const em = getSafeMethod(e.method);
                 return e.date === date && em === m;
             }).reduce((sum, e) => sum + (Number(e.amount)||0) + (Number(e.tobacco)||0) + (Number(e.hospital)||0) + (Number(e.medicine)||0) + (Number(e.transport)||0), 0)),
